@@ -1,0 +1,287 @@
+---
+title: "meddebt data manipulation"
+author: "Rachel Marconi"
+date: "2024-02-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries}
+library(tidyverse)
+library(janitor)
+library(dplyr)
+library(readxl)
+library(jsonlite)
+```
+
+# Import and join all data for main chart
+
+## County level 
+```{r}
+# county share and amount data for all debtors
+county_share_amount_all <- read_xlsx('./data-in/all_county_export.xlsx') %>% 
+  clean_names()
+
+# county share and amount data for POC and white breakdown
+county_share_amount_race <- read_xlsx('./data-in/all_county_export_race.xlsx') %>% 
+  clean_names() %>% 
+  select(-state_abreviation)
+
+county_share_amount <- county_share_amount_all %>% 
+  left_join(county_share_amount_race, by = c("county_nm","county_fips","year")) %>% 
+  rename(name = county_nm, fips = county_fips)
+
+```
+
+## State level
+```{r}
+# state share and amount data for all debtors
+state_share_amount_all <- read_xlsx('./data-in/all_state_export.xlsx') %>% 
+  clean_names()
+
+# state share and amount data for POC and white breakdown
+state_share_amount_race <- read_xlsx('./data-in/all_state_export_race.xlsx') %>% 
+  clean_names()
+
+state_share_amount <- state_share_amount_all %>% 
+  left_join(state_share_amount_race, by = c("state_abreviation","state_fip","year")) %>% 
+  rename(name = state_abreviation, fips = state_fip)
+
+```
+
+## National level
+```{r}
+# US share and amount data for all debtors
+nation_share_amount_all <- read_xlsx('./data-in/all_usa_export.xlsx') %>% 
+  clean_names() %>% 
+  select(-usa)
+
+nation_share_amount_race <- read_xlsx('./data-in/all_usa_export_race.xlsx') %>% 
+  clean_names() %>% 
+  select(-usa)
+
+nation_share_amount <- nation_share_amount_all %>% 
+  left_join(nation_share_amount_race, by = c("year")) %>% 
+  mutate(name = "US", fips = "00")
+
+```
+
+## Let's join across geographies and split across metrics
+```{r}
+all_debt_share_amount <- bind_rows(county_share_amount, state_share_amount, nation_share_amount)
+
+all_share_with_debt_all <- all_debt_share_amount %>% 
+  select(fips, name, year, contains("share"), -contains("majority")) %>% 
+  pivot_wider(names_from = year, values_from = share_with_medical_debt_in_collections) %>% 
+  mutate(metric = "share_debt_all")
+
+all_share_with_debt_poc <- all_debt_share_amount %>% 
+  select(fips, name, year, share_with_medical_debt_in_collections_majority_of_color) %>% 
+  pivot_wider(names_from = year, values_from = contains("share")) %>% 
+  mutate(metric = "share_debt_poc")
+
+all_share_with_debt_white <- all_debt_share_amount %>% 
+  select(fips, name, year, share_with_medical_debt_in_collections_majority_white) %>% 
+  pivot_wider(names_from = year, values_from = contains("share")) %>% 
+  mutate(metric = "share_debt_white")
+
+# ------------------------------
+
+all_amount_of_debt_all <- all_debt_share_amount %>% 
+  select(fips, name, year, contains("median"), -contains("majority")) %>% 
+  pivot_wider(names_from = year, values_from = contains("median")) %>% 
+  mutate(metric = "amount_debt_all")
+
+all_amount_of_debt_poc <- all_debt_share_amount %>% 
+  select(fips, name, year, median_medical_debt_in_collections_in_2023_majority_of_color) %>% 
+  pivot_wider(names_from = year, values_from = contains("median")) %>% 
+  mutate(metric = "amount_debt_poc")
+
+all_amount_of_debt_white <- all_debt_share_amount %>% 
+  select(fips, name, year, median_medical_debt_in_collections_in_2023_majority_white) %>% 
+  pivot_wider(names_from = year, values_from = contains("median")) %>% 
+  mutate(metric = "amount_debt_white")
+
+```
+
+# Import all files for metric charts
+
+## ACS data
+```{r}
+# county ACS data
+county_acs <- read_xlsx('./data-in/acs_county_2023.xlsx') %>% 
+  clean_names() %>% 
+  select(-county_nm, -state_abbreviation) %>% 
+  rename(fips = county_fips)
+
+# state ACS data
+state_acs <- read_xlsx('./data-in/acs_state_2023.xlsx') %>% 
+  clean_names() %>% 
+  select(-state_abbreviation) %>% 
+  rename(fips = state_fip)
+
+# us ACS data
+nation_acs <- read_xlsx('./data-in/acs_national_2023.xlsx') %>% 
+  clean_names() %>% 
+  select(-usa) %>% 
+  mutate(fips = "00")
+
+all_acs <- bind_rows(county_acs, state_acs, nation_acs) %>% 
+  mutate(year = as.character(year))
+
+all_no_insurance <- all_acs %>% 
+  select(fips, year, share_of_the_population_with_no_health_insurance_coverage) %>% 
+  mutate(share_of_the_population_with_no_health_insurance_coverage = as.character(share_of_the_population_with_no_health_insurance_coverage)) %>% 
+  pivot_wider(names_from = year, values_from = share_of_the_population_with_no_health_insurance_coverage) %>% 
+  mutate(metric = "uninsured")
+
+all_income <- all_acs %>% 
+  select(fips, year, average_household_income_in_2023_dollars) %>% 
+  mutate(average_household_income_in_2023_dollars = as.character(average_household_income_in_2023_dollars)) %>% 
+  pivot_wider(names_from = year, values_from = average_household_income_in_2023_dollars) %>% 
+  mutate(metric = "hh_income")
+
+all_disability <- all_acs %>% 
+  select(fips, year, share_of_non_elderly_adults_with_a_reported_disability) %>% 
+  mutate(share_of_non_elderly_adults_with_a_reported_disability = as.character(share_of_non_elderly_adults_with_a_reported_disability)) %>% 
+  pivot_wider(names_from = year, values_from = share_of_non_elderly_adults_with_a_reported_disability) %>% 
+  mutate(metric = "share_disabled")
+
+```
+
+## Merger data
+### Notes
+These files coming from the research team remove columns for regions where no merges or closures occured. That means that in joining these files, not every region is guaranteed to have data for this metric, and I can't assume it'll be present. Therefore, I'll check if data was found for a certain metric for a certain region, and if the metric is "closes_merges" I can fill with zeroes -- but if the metric is not this one, I'll still throw an error. 
+
+```{r}
+# county merger data
+county_merger <- read_xlsx('./data-in/close_merge_sum_county.xlsx') %>% 
+  clean_names() %>% 
+  rename(fips = county_fips)
+
+# state merger data
+state_merger <- read_xlsx('./data-in/close_merge_sum_state.xlsx') %>% 
+  clean_names() %>% 
+  select(-state_name) %>% 
+  rename(fips = state_fip)
+
+# us merger data
+nation_merger <- read_xlsx('./data-in/close_merge_sum_nat.xlsx') %>% 
+  clean_names() %>% 
+  select(-national) %>% 
+  mutate(fips = "00")
+
+all_merger <- bind_rows(county_merger, state_merger, nation_merger) %>% 
+  mutate(number_of_hospital_closures_mergers = as.character(number_of_hospital_closures_mergers)) %>% 
+  pivot_wider(names_from = year, values_from = number_of_hospital_closures_mergers) %>% 
+  mutate(metric = "closes_merges")
+
+
+```
+
+## Hospital density data
+```{r}
+# county hospital density data
+county_density <- read_xls('./data-in/HHI by year and county.xls') %>% 
+  clean_names() %>% 
+  rename(fips = county, name = countyname)
+
+# state hospital density data
+state_density <- read_xls('./data-in/HHI by year and state.xls') %>% 
+  clean_names() %>% 
+  rename(fips = state, name = stab)
+
+# us hospital density data
+nation_density <- read_xls('./data-in/HHI by year and national.xls') %>% 
+  clean_names() %>% 
+  rename(hhi_w = hhi_unweight) %>% 
+  select(-us) %>% 
+  mutate(fips = "00", name = "US")
+
+all_density <- bind_rows(county_density, state_density, nation_density) %>% 
+  mutate(year = as.character(year), hhi_w = as.character(hhi_w)) %>% 
+  pivot_wider(names_from = year, values_from = hhi_w) %>% 
+  mutate(metric = "hospital_density")
+```
+
+## make a tidy little name table for everyone
+
+```{r}
+st_crosswalk <- tibble(state = state.name) %>%
+   bind_cols(tibble(abb = state.abb)) %>% 
+   bind_rows(tibble(state = "District of Columbia", abb = "DC"))
+  
+names <- all_debt_share_amount %>% 
+  select(fips, region_lsad = name, state_abreviation) %>% 
+  mutate(state_abreviation = ifelse(nchar(region_lsad) == 2, region_lsad, state_abreviation)) %>% 
+  distinct() %>% 
+  left_join(st_crosswalk, by = c("state_abreviation" = "abb")) %>% 
+  mutate(full_name = ifelse(region_lsad == "US", "United States of America",
+                            ifelse(nchar(region_lsad) == 2, state, 
+                                   paste0(region_lsad,", ",state)))) %>% 
+  select(fips, full_name)
+
+```
+
+# Now we're going to take all these metric tables and join em up
+
+```{r}
+one_big_data_by_geo <- bind_rows(all_disability, all_income, all_no_insurance,
+                                 all_amount_of_debt_all, all_amount_of_debt_poc, all_amount_of_debt_white,
+                                 all_share_with_debt_all, all_share_with_debt_poc, all_share_with_debt_white,
+                                 all_density, all_merger) %>% 
+  select(-name) %>% 
+  left_join(names, by = c("fips")) %>% 
+  select(fips, full_name, metric, everything())
+
+write_csv(one_big_data_by_geo, "./data-out/one_big_data_by_geo.csv") # 5.4 MB
+write(toJSON(one_big_data_by_geo),"./data-out/one_big_data_by_geo.json") # 9.7 MB
+
+```
+
+
+
+
+
+
+
+
+
+# For initial EDA in Datawrapper
+
+```{r}
+# meddebt_states <- read_excel("data-in/all_state_export.xlsx") %>% 
+#   clean_names() 
+# 
+# median_meddebt <- meddebt_states%>% 
+#   select(-share_with_medical_debt_in_collections, -state_fip) %>% 
+#   pivot_wider(names_from = state_abreviation, values_from = median_medical_debt_in_collections_in_2023) %>% 
+#   write_csv("data-out/state_median_meddebt.csv")
+# 
+# share_meddebt <- meddebt_states%>% 
+#   select(-median_medical_debt_in_collections_in_2023, -state_fip) %>% 
+#   mutate(share_with_medical_debt_in_collections = round(100*as.double(share_with_medical_debt_in_collections),1)) %>% 
+#   pivot_wider(names_from = state_abreviation, values_from = share_with_medical_debt_in_collections) %>% 
+#   write_csv("data-out/state_share_meddebt.csv")
+# 
+# glimpse(meddebt_states)
+```
+
+```{r}
+# meddebt_states_hhi <- read_excel("./data-in/HHI by year and state.xls") %>% 
+#   clean_names() 
+# 
+# hhi_by_state <- meddebt_states_hhi%>% 
+#   mutate(hhi_w_clean = round(hhi_w)) %>% 
+#   select(-state, -hhi_w) %>% 
+#   pivot_wider(names_from = stab, values_from = hhi_w_clean) %>% 
+#   write_csv("./data-out/hhi_state.csv")
+# 
+# 
+# glimpse(meddebt_states)
+
+
+```

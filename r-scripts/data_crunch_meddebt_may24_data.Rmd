@@ -1,0 +1,112 @@
+---
+title: "meddebt data manipulation"
+author: "Rachel Marconi"
+date: "2024-05-27"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries}
+library(tidyverse)
+library(janitor)
+library(dplyr)
+library(readxl)
+library(jsonlite)
+```
+
+# Plan for the data
+Data comes in with one record for each year for each geography, and every metric is a column for that year. Zeros are filled in and NAs fill the rest. Some data is in scientific notation, which will need amended for tool use. We're going to bind all the data together and then pivot so every row is a geography at a metric and each column is a year, which is the format expected for line charts (grab a row and build out a line on a metric chart).
+
+# Import and join all data for main chart
+## Normalize data coming in
+```{r} 
+#county_data has 15 columns because it has both county_name and state_abbreviation where state_data (14) has only state_abbreviation
+county_data <- read_excel("./data-in/County_Merged_062724.xlsx", 
+                          col_types = c("numeric", "text", "text","text","numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric"), na = "NA") %>% 
+  clean_names() %>% 
+  rename(fips = county_fips, hospital_market_concentration_hhi = hhi) %>% 
+  glimpse()
+
+
+state_data <- read_excel("./data-in/State_Merged_062724.xlsx",
+                         col_types = c("numeric", "text","text","numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric"), na = "NA") %>% 
+  clean_names() %>% 
+  rename(fips = state_fips, hospital_market_concentration_hhi = hhi) %>% 
+  glimpse()
+
+#we're skipping the usa column in favor of a name column, also rename to match
+nation_data <- read_excel("./data-in/National_Merged_062724.xlsx",
+                         col_types = c("numeric","skip","numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric"), na = "NA") %>% 
+  clean_names() %>% 
+  mutate(full_name = "US", fips = "00") %>% 
+  rename(, hospital_market_concentration_hhi = hhi) %>% 
+  glimpse()
+
+```
+
+## Spell out all names in one column
+### First, we're making a lookup table with state abbreviations and the full names we want to use
+```{r}
+st_crosswalk <- tibble(state = state.name) %>%
+   bind_cols(tibble(abb = state.abb)) %>% 
+   bind_rows(tibble(state = "District of Columbia", abb = "DC"))
+
+```
+
+### Then we'll mold our tables to use these names in a full_name column
+```{r}
+county_data_no_match <- county_data %>% 
+  anti_join(st_crosswalk, by = c("state_abbreviation" = "abb"))
+# everything matches
+
+county_data_full_names <- county_data %>% 
+  left_join(st_crosswalk, by = c("state_abbreviation" = "abb")) %>% 
+  mutate(full_name = paste0(county_name, ", ", state)) %>% 
+  select(fips, full_name, year, everything(), -county_name, -state, -state_abbreviation)
+
+state_data_no_match <- state_data %>% 
+  anti_join(st_crosswalk, by = c("state_abbreviation" = "abb"))
+# everything matches
+
+state_data_full_names <- state_data %>% 
+  left_join(st_crosswalk, by = c("state_abbreviation" = "abb")) %>% 
+  select(fips, full_name = state, everything(), -state_abbreviation)
+
+```
+
+## Bind it all up and condense the metric names
+```{r}
+all_data <- bind_rows(county_data_full_names, state_data_full_names, nation_data) %>% 
+  rename(share_debt_all = share_with_medical_debt_in_collections, 
+         amount_debt_all = median_medical_debt_in_collections_in_2023,
+         share_debt_white = share_with_medical_debt_in_collections_majority_white,
+        amount_debt_white = median_medical_debt_in_collections_in_2023_majority_white,
+        share_debt_poc = share_with_medical_debt_in_collections_majority_of_color, 
+        amount_debt_poc = median_medical_debt_in_collections_in_2023_majority_of_color, 
+        hospital_density = hospital_market_concentration_hhi,
+        closes_merges = number_of_closures_and_mergers, 
+        uninsured = share_of_the_population_with_no_health_insurance_coverage, 
+        share_disabled = share_of_non_elderly_adults_with_a_reported_disability,
+        hh_income = average_household_income_in_2023)
+
+```
+
+
+# Pivot data so columns are years and each geography has a record for each metric
+```{r}
+all_data_transposed <- all_data %>% 
+  pivot_wider(id_cols = c(fips, full_name),names_from = year, values_from = -c(fips, full_name, year)) %>% 
+  pivot_longer(-c(fips,full_name), names_to = c("metric",".value"), names_pattern = "(.+)_(.{4}$)")
+
+```
+
+# Save the data to file for use in tool
+This file is smaller than the previous versions because a lot of the rounding is done (fewer digits saved to file) and we've lost counties that didn't exist before 2023. This means a faster tool!
+```{r} 
+write_csv(all_data_transposed, "./data-out/county_state_nat_all_metrics_merge_062724.csv") 
+
+```
+
