@@ -6,8 +6,6 @@ This apps project compares the changing debt burden for families across differen
 
 The production URL is [https://apps.urban.org/features/dev/medical-debt-over-time/](https://apps.urban.org/features/dev/medical-debt-over-time/)
 
-The staging URL is [https://apps-staging.urban.org/features/dev/medical-debt-over-time/](https://apps-staging.urban.org/features/dev/medical-debt-over-time/)
-
 Design: Brittney Spinner
 
 Dataviz and Development: Rachel Marconi
